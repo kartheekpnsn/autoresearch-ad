@@ -1,111 +1,196 @@
-# autoresearch
+---
+title: VAE Anomaly Detection Autoresearch
+description: Autonomous experiment protocol for tabular time-series anomaly detection
+---
 
-This is an experiment to have the LLM do its own tabular deep-learning research.
+## Objective
+
+Autonomously improve a PyTorch variational autoencoder (VAE) that detects
+anomalies in multivariate time-series data. Optimize validation F2 while
+preserving a locked chronological test holdout.
+
+The immutable task contract is:
+
+* Data file: `data/gen_data_29aug2026.csv`
+* Timestamp column: `timestamp`
+* Label column: `is_injected`
+* Positive class: `is_injected == True`
+* Model family: PyTorch VAE using reconstruction error as the anomaly score
+* Primary selection metric: pointwise validation F2 (`beta=2`)
+* Supporting metrics: anomaly recall, precision, false positives, captured
+  anomaly points, and contiguous-event recall
+* Runtime: Conda environment `persistent_env`
+* Platform: macOS with MPS preferred and CPU fallback
+
+Labels may exclude contaminated training windows and calibrate the validation
+threshold. Labels must never be model inputs, feature values, reconstruction
+targets, or part of the VAE loss.
 
 ## Setup
 
-To set up a new experiment, work with the user to:
+Before starting a new research run:
 
-1. **Agree on a run tag**: propose a tag based on today's date (e.g. `mar5`). The branch `autoresearch/<tag>` must not already exist; this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Read the in-scope files**: The repo is small. Read these files for full context:
-   - `README.md`: repository context.
-   - `train.py`: the file you modify. Model architecture, optimizer, training loop, and metric.
-   - `data/master.csv`: the structured tabular dataset.
-4. **Verify data exists**: Check that `data/master.csv` exists and contains the target column `num`.
-5. **Initialize results.csv**: Create `results.csv` with just the header row. The baseline will be recorded after the first run.
-6. **Confirm and go**: Confirm setup looks good.
+1. Propose a date-based run tag, such as `aug30`.
+2. Confirm that `autoresearch/<tag>` does not already exist.
+3. Create `autoresearch/<tag>` from the current default branch.
+4. Read `README.md`, `train.py`, `program.md`, and `requirements.txt`.
+5. Verify that the data file exists and contains `timestamp` and `is_injected`.
+6. Verify the environment with
+   `conda run -n persistent_env python -c "import numpy, pandas, torch"`.
+7. Create `results.csv` with the header shown in the Results Log section.
+8. Confirm setup with the user, then begin the experiment loop.
 
-Once you get confirmation, kick off the experimentation.
+Do not install packages unless an existing dependency from `requirements.txt`
+is missing in `persistent_env`.
 
-## Experimentation
+## Data And Evaluation Contract
 
-Each experiment trains a PyTorch deep neural network for binary classification on structured tabular data. The data lives in `data/master.csv`, and the target column is `num`. Treat `num == 0` as class 0 and `num > 0` as class 1.
+The baseline uses flattened causal windows containing the current timestamp and
+the previous 23 hours across all numeric signals.
 
-The computer is Mac OS. Prefer Apple GPU acceleration through PyTorch MPS when available, with CPU as a fallback. You launch an experiment simply as:
+Window endpoints are split by original source-row index:
+
+| Split | Endpoint rows | Purpose |
+|-------|---------------|---------|
+| Train | `< 550` | Learn normal behavior |
+| Validation | `550` through `824` | Select checkpoints and anomaly threshold |
+| Test | `>= 825` | Locked final evaluation |
+
+These boundaries do not divide a contiguous injected-anomaly event. Keep them
+fixed across all experiments so scores remain comparable.
+
+The training pipeline must satisfy these rules:
+
+* Exclude a training window when any timestamp in that window is labeled as an
+  injected anomaly
+* Fit imputation and scaling statistics on retained training windows only
+* Fit VAE weights on retained training windows only
+* Use only normal validation windows for reconstruction-based checkpoint
+  selection
+* Select the anomaly threshold on the full validation split by maximum F2
+* Apply the locked validation threshold to test scores without retuning
+* Treat contiguous `True` labels within a split as one anomaly event
+
+The data currently contains 20,000 rows. The long test tail is intentional and
+must not be truncated or sampled to improve results.
+
+## Allowed Experiments
+
+Modify only `train.py` during the autonomous experiment loop. Reasonable
+experiments include:
+
+* Encoder and decoder depth or width
+* Latent dimension
+* Activation functions, normalization, and dropout
+* Causal temporal representation and sequence length
+* Reconstruction loss formulation
+* KL weighting or annealing
+* Optimizer, learning rate, weight decay, batch size, and scheduler
+* Early stopping and checkpoint-selection details
+* Unsupervised signal transformations fitted on training data only
+
+Keep the implementation a VAE whose anomaly score is derived from
+reconstruction behavior. Prefer a simpler experiment when scores are equal.
+
+## Forbidden Changes
+
+Do not:
+
+* Change the data path, timestamp column, target column, split boundaries,
+  random seed, F2 definition, or primary selection metric
+* Add a supervised prediction head or optimize model weights against labels
+* Include labels or label-derived values in model inputs
+* Fit preprocessing on validation or test data
+* Tune thresholds, architecture, or hyperparameters against test metrics
+* Truncate, resample, regenerate, or edit the source dataset
+* Add dependencies or modify files other than `train.py`
+
+## Baseline
+
+The first run must establish the untouched baseline and may evaluate test once:
 
 ```bash
-uv run train.py
-```
-
-**What you CAN do:**
-- Modify `train.py`. Everything is fair game inside that file: model architecture, optimizer, learning rate, batch size, dropout, class weighting, feature handling, threshold selection, validation split, training loop, etc.
-- Change the architecture or hyperparameters and do a simple run for each experiment.
-
-**What you CANNOT do:**
-- Install new packages or add dependencies. You can only use what's already in `pyproject.toml`.
-- Change the task, data path, target column, or metric definition.
-
-**The goal is simple: maximize validation FBeta score with beta=2.** Everything is fair game inside the training script as long as it is still a PyTorch deep neural network for tabular binary classification on `data/master.csv`.
-
-**Memory** is a soft constraint. Prefer simple models that fit comfortably on a Mac using MPS. Some increase is acceptable for meaningful FBeta gains, but it should not blow up dramatically.
-
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Conversely, removing something and getting equal or better results is a simplification win. When evaluating whether to keep a change, weigh the complexity cost against the improvement magnitude.
-
-**The first run**: Your very first run should always be to establish the baseline, so you will run the training script as is.
-
-## Output format
-
-Once the script finishes it prints epoch logs and then a CSV summary like this:
-
-```csv
----
-data_path,target,device,fbeta_beta,val_fbeta,best_threshold,best_epoch,training_seconds,num_features,num_params,config_hidden_dims,config_dropout,config_batch_size,config_epochs,config_learning_rate,config_weight_decay,config_val_fraction,config_beta
-data/master.csv,num,mps,2.0,0.812345,0.35,80,4.2,10,12033,"(128, 64, 32)",0.2,64,120,0.001,0.0001,0.2,2.0
-```
-
-You can extract the final metric from the log file:
-
-```bash
+conda run -n persistent_env python train.py --evaluate-test > run.log 2>&1
 tail -n 1 run.log
 ```
 
-## Logging results
+Record both validation and test metrics for the baseline. During model
+selection, run without `--evaluate-test`; the stable CSV schema leaves test
+fields blank.
 
-When an experiment is done, log it to `results.csv`.
+## Experiment Loop
 
-The CSV has a header row and 5 columns:
+Repeat until manually stopped:
+
+1. Inspect the current branch, commit, and working tree.
+2. Form one testable hypothesis based on the current best result.
+3. Make one focused change to `train.py`.
+4. Commit the experiment.
+5. Run the experiment:
+
+   ```bash
+   conda run -n persistent_env python train.py > run.log 2>&1
+   ```
+
+6. Read the final CSV row:
+
+   ```bash
+   tail -n 1 run.log
+   ```
+
+7. If the CSV row is missing or malformed, inspect the failure:
+
+   ```bash
+   tail -n 50 run.log
+   ```
+
+8. Append the experiment to `results.csv`.
+9. Keep the commit only when `val_fbeta` strictly improves.
+10. Reset the experiment commit when `val_fbeta` is equal or worse.
+
+Never use test fields in the keep or discard decision. Do not run
+`--evaluate-test` during intermediate experiments.
+
+## Results Log
+
+Keep `results.csv` uncommitted with these columns:
 
 ```csv
 commit,val_fbeta,status,description,notes
 ```
 
-1. git commit hash (short, 7 chars)
-2. validation FBeta score with beta=2 (e.g. 0.812345); use 0.000000 for crashes
-3. status: `keep`, `discard`, or `crash`
-4. short text description of what this experiment tried
-5. optional notes, such as best threshold, epoch, or failure reason
-
-Example:
+Use a seven-character commit hash, `keep`, `discard`, or `crash`, a concise
+experiment description, and useful validation details:
 
 ```csv
 commit,val_fbeta,status,description,notes
-a1b2c3d,0.812345,keep,baseline,"threshold=0.35 epoch=80"
-b2c3d4e,0.830100,keep,wider hidden layers,"threshold=0.40 epoch=62"
-c3d4e5f,0.801000,discard,higher dropout,"threshold=0.25 epoch=90"
-d4e5f6g,0.000000,crash,too high learning rate,"loss became NaN"
+a1b2c3d,0.812345,keep,baseline,"threshold=1.42 recall=0.84 events=2/2"
+b2c3d4e,0.826100,keep,lower KL weight,"threshold=1.37 recall=0.87 events=2/2"
+c3d4e5f,0.801000,discard,wider decoder,"threshold=1.51 recall=0.79 events=2/2"
+d4e5f6g,0.000000,crash,higher learning rate,"loss became non-finite"
 ```
 
-## The Experiment Loop
+The script prints progress followed by a header and one CSV result row. Extract
+the score from the `val_fbeta` column, not from a hard-coded column position.
 
-The experiment runs on a dedicated branch (e.g. `autoresearch/mar5` or `autoresearch/mar5-mps`).
+## Final Evaluation
 
-LOOP FOREVER:
+When experimentation is manually stopped, evaluate the retained winner once:
 
-1. Look at the git state: the current branch/commit we're on.
-2. Tune `train.py` with an experimental idea by directly hacking the code.
-3. git commit.
-4. Run the experiment: `uv run train.py > run.log 2>&1` (redirect everything; do not use tee or let output flood your context).
-5. Read out the result CSV row: `tail -n 1 run.log`.
-6. If the CSV row is missing or malformed, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
-7. Record the results in `results.csv` (do not commit `results.csv`; leave it untracked by git).
-8. If `val_fbeta` improved (higher), you "advance" the branch, keeping the git commit.
-9. If `val_fbeta` is equal or worse, you git reset back to where you started.
+```bash
+conda run -n persistent_env python train.py --evaluate-test > final.log 2>&1
+tail -n 1 final.log
+```
 
-The idea is that you are a completely autonomous researcher trying things out. If they work, keep. If they don't, discard. You are advancing the branch so that you can iterate.
+Report the best validation F2, validation recall, validation event capture,
+locked test F2, test recall, test event capture, experiment count, and the main
+change responsible for the improvement.
 
-**Timeout**: Each experiment should be a simple run and complete quickly on Mac OS. If a run exceeds 10 minutes, kill it and treat it as a failure.
+## Runtime And Failure Rules
 
-**Crashes**: If a run crashes, use your judgment. If it's something dumb and easy to fix, fix it and re-run. If the idea itself is fundamentally broken, log `crash` and move on.
-
-**NEVER STOP**: Once the experiment loop has begun, do not pause to ask the human if you should continue. Do not ask "should I keep going?" or "is this a good stopping point?". The human expects you to continue working until manually stopped.
+* Allow at most 10 minutes per experiment
+* Kill and record runs exceeding the limit as crashes
+* Repair obvious implementation errors and rerun the same experiment
+* Abandon fundamentally broken ideas after a few focused repair attempts
+* Keep model size and memory practical for a Mac
+* Continue autonomously until manually stopped; do not ask whether to continue
