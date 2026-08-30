@@ -27,7 +27,7 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_PATH = SCRIPT_DIR / "data/gen_data_29aug2026.csv"
+DATA_PATH = SCRIPT_DIR / "data/gen_data.csv"
 TARGET_COLUMN = "is_injected"
 TIME_COLUMN = "timestamp"
 TRAIN_END = 550
@@ -488,7 +488,7 @@ def train(*, evaluate_test: bool = False) -> dict[str, float | int | str]:
     elapsed = time.time() - started
 
     summary: dict[str, float | int | str] = {
-        "data_path": "data/gen_data_29aug2026.csv",
+        "data_path": "data/gen_data.csv",
         "target": TARGET_COLUMN,
         "device": device.type,
         "fbeta_beta": config.beta,

@@ -12,7 +12,7 @@ threshold and rank experiments by F2, which emphasizes anomaly recall.
 
 ## Task
 
-* Data: `data/gen_data_29aug2026.csv`
+* Data: `data/gen_data.csv`
 * Timestamp: `timestamp`
 * Anomaly label: `is_injected`
 * Signals: six numeric value columns in the current dataset

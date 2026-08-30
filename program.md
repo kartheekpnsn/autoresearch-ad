@@ -11,7 +11,7 @@ preserving a locked chronological test holdout.
 
 The immutable task contract is:
 
-* Data file: `data/gen_data_29aug2026.csv`
+* Data file: `data/gen_data.csv`
 * Timestamp column: `timestamp`
 * Label column: `is_injected`
 * Positive class: `is_injected == True`
