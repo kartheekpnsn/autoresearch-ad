@@ -30,9 +30,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_PATH = SCRIPT_DIR / "data/gen_data.csv"
 TARGET_COLUMN = "is_injected"
 TIME_COLUMN = "timestamp"
-TRAIN_END = 550
-VAL_END = 825
+TRAIN_END = 550_000
+VAL_END = 825_000
 SEED = 42
+SCORE_BATCH_SIZE = 8192
 EXIT_SUCCESS = 0
 
 
@@ -309,15 +310,21 @@ def reconstruction_scores(
     values: np.ndarray,
     signal_count: int,
     device: torch.device,
+    batch_size: int = SCORE_BATCH_SIZE,
 ) -> np.ndarray:
     """Calculate deterministic reconstruction errors at window endpoints."""
     model.eval()
-    tensor = torch.tensor(values, dtype=torch.float32, device=device)
-    reconstructed = model.reconstruct(tensor)
-    endpoint_errors = torch.abs(
-        tensor[:, -signal_count:] - reconstructed[:, -signal_count:]
-    )
-    return torch.mean(endpoint_errors, dim=1).cpu().numpy()
+    scores: list[np.ndarray] = []
+    for start in range(0, len(values), batch_size):
+        tensor = torch.tensor(
+            values[start : start + batch_size], dtype=torch.float32, device=device
+        )
+        reconstructed = model.reconstruct(tensor)
+        endpoint_errors = torch.abs(
+            tensor[:, -signal_count:] - reconstructed[:, -signal_count:]
+        )
+        scores.append(torch.mean(endpoint_errors, dim=1).cpu().numpy())
+    return np.concatenate(scores)
 
 
 def detection_metrics(
@@ -365,24 +372,38 @@ def select_threshold(
     """Select the validation threshold maximizing F-beta and anomaly recall."""
     if not len(scores) or len(scores) != len(labels):
         raise ValueError("scores and labels must be non-empty and equally sized")
-    if not np.asarray(labels, dtype=bool).any():
+    labels = np.asarray(labels, dtype=bool)
+    anomaly_count = int(labels.sum())
+    if not anomaly_count:
         raise ValueError("validation labels must contain at least one anomaly")
 
-    best_threshold = float(np.max(scores))
-    best_metrics = detection_metrics(labels, scores >= best_threshold, beta)
-    best_key = (
-        best_metrics.fbeta,
-        best_metrics.recall,
-        -best_metrics.false_positives,
-        best_threshold,
+    descending_order = np.argsort(scores, kind="stable")[::-1]
+    sorted_scores = scores[descending_order]
+    sorted_labels = labels[descending_order]
+    true_positives = np.cumsum(sorted_labels)
+    predicted_positives = np.arange(1, len(scores) + 1)
+    candidate_indices = np.flatnonzero(
+        np.r_[sorted_scores[:-1] != sorted_scores[1:], True]
     )
-    for threshold in np.unique(scores):
-        metrics = detection_metrics(labels, scores >= threshold, beta)
-        key = (metrics.fbeta, metrics.recall, -metrics.false_positives, float(threshold))
-        if key > best_key:
-            best_threshold = float(threshold)
-            best_metrics = metrics
-            best_key = key
+    candidate_true_positives = true_positives[candidate_indices]
+    candidate_predicted_positives = predicted_positives[candidate_indices]
+    false_positives = candidate_predicted_positives - candidate_true_positives
+    precision = candidate_true_positives / candidate_predicted_positives
+    recall = candidate_true_positives / anomaly_count
+    beta_squared = beta * beta
+    denominator = beta_squared * precision + recall
+    fbeta = np.divide(
+        (1 + beta_squared) * precision * recall,
+        denominator,
+        out=np.zeros_like(denominator, dtype=float),
+        where=denominator != 0,
+    )
+    candidate_thresholds = sorted_scores[candidate_indices]
+    best_index = np.lexsort(
+        (candidate_thresholds, -false_positives, recall, fbeta)
+    )[-1]
+    best_threshold = float(candidate_thresholds[best_index])
+    best_metrics = detection_metrics(labels, scores >= best_threshold, beta)
     return best_threshold, best_metrics
 
 

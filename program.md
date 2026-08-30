@@ -52,9 +52,9 @@ Window endpoints are split by original source-row index:
 
 | Split | Endpoint rows | Purpose |
 |-------|---------------|---------|
-| Train | `< 550` | Learn normal behavior |
-| Validation | `550` through `824` | Select checkpoints and anomaly threshold |
-| Test | `>= 825` | Locked final evaluation |
+| Train | `< 550,000` | Learn normal behavior |
+| Validation | `550,000` through `824,999` | Select checkpoints and anomaly threshold |
+| Test | `>= 825,000` | Locked final evaluation |
 
 These boundaries do not divide a contiguous injected-anomaly event. Keep them
 fixed across all experiments so scores remain comparable.
@@ -71,8 +71,12 @@ The training pipeline must satisfy these rules:
 * Apply the locked validation threshold to test scores without retuning
 * Treat contiguous `True` labels within a split as one anomaly event
 
-The data currently contains 20,000 rows. The long test tail is intentional and
+The data currently contains 1,000,000 rows. The long test tail is intentional and
 must not be truncated or sampled to improve results.
+
+The current labels contain six anomaly events. The fixed boundaries place two
+events (30,001 points) in validation and one event (50,000 points) in test;
+neither boundary divides a contiguous event.
 
 ## Allowed Experiments
 

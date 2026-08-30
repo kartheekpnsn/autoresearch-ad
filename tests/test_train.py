@@ -4,12 +4,14 @@ import numpy as np
 import pytest
 import torch
 
+import train
 from train import (
     Config,
     VariationalAutoencoder,
     build_causal_windows,
     detection_metrics,
     prepare_splits,
+    reconstruction_scores,
     select_threshold,
 )
 
@@ -39,8 +41,12 @@ def test_given_anomaly_in_window_history_when_windowed_then_history_is_flagged()
     assert windowed.history_has_anomaly.tolist() == [True, True, False, False]
 
 
-def test_given_chronological_data_when_prepared_then_uses_fixed_splits_and_clean_train():
+def test_given_chronological_data_when_prepared_then_uses_fixed_splits_and_clean_train(
+    monkeypatch,
+):
     # Arrange
+    monkeypatch.setattr(train, "TRAIN_END", 550)
+    monkeypatch.setattr(train, "VAL_END", 825)
     rows = 900
     values = np.column_stack(
         [np.arange(rows, dtype=np.float32), np.arange(rows, dtype=np.float32) * 2]
@@ -63,8 +69,10 @@ def test_given_chronological_data_when_prepared_then_uses_fixed_splits_and_clean
     assert splits.train.mean(axis=0) == pytest.approx(0.0, abs=1e-5)
 
 
-def test_given_split_boundary_inside_event_when_prepared_then_raises():
+def test_given_split_boundary_inside_event_when_prepared_then_raises(monkeypatch):
     # Arrange
+    monkeypatch.setattr(train, "TRAIN_END", 550)
+    monkeypatch.setattr(train, "VAL_END", 825)
     values = np.ones((900, 1), dtype=np.float32)
     labels = np.zeros(900, dtype=bool)
     labels[549:551] = True
@@ -119,3 +127,22 @@ def test_given_batch_when_vae_runs_then_outputs_have_expected_shapes():
     assert deterministic.shape == values.shape
     assert mean.shape == (5, 3)
     assert log_variance.shape == (5, 3)
+
+
+def test_given_multiple_score_batches_when_reconstructed_then_all_scores_are_returned():
+    # Arrange
+    model = VariationalAutoencoder(
+        input_dim=12, hidden_dims=(8, 4), latent_dim=3, dropout=0.0
+    )
+    values = np.arange(60, dtype=np.float32).reshape(5, 12)
+
+    # Act
+    batched_scores = reconstruction_scores(
+        model, values, signal_count=2, device=torch.device("cpu"), batch_size=2
+    )
+    single_batch_scores = reconstruction_scores(
+        model, values, signal_count=2, device=torch.device("cpu"), batch_size=5
+    )
+
+    # Assert
+    assert batched_scores == pytest.approx(single_batch_scores)

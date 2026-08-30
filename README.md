@@ -32,16 +32,23 @@ across all numeric signals. It uses fixed chronological endpoint boundaries:
 
 | Split | Source-row endpoints | Use |
 |-------|----------------------|-----|
-| Train | `< 550` | VAE fitting on clean windows |
-| Validation | `550` through `824` | Checkpoint and threshold selection |
-| Test | `>= 825` | Locked baseline and final evaluation |
+| Train | `< 550,000` | VAE fitting on clean windows |
+| Validation | `550,000` through `824,999` | Checkpoint and threshold selection |
+| Test | `>= 825,000` | Locked baseline and final evaluation |
 
 A training window is removed when any timestamp in its history has
 `is_injected == True`. Missing-value imputation and standardization are fitted
 only on the remaining training windows.
 
-The current source file contains 20,000 rows. The test split intentionally
+The current source file contains 1,000,000 rows. The test split intentionally
 retains the full chronological tail.
+
+These boundaries preserve the original chronological proportions. Validation
+contains 30,001 anomaly points across two events, while test contains 50,000
+anomaly points in one event. Neither boundary divides an anomaly event.
+
+Reconstruction scores are computed in bounded batches so the full test tail is
+evaluated without placing every test window on the accelerator at once.
 
 ## Metrics
 
