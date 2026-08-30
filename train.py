@@ -41,7 +41,7 @@ class Config:
     """VAE architecture, optimization, and temporal feature configuration."""
 
     hidden_dims: tuple[int, ...] = (96, 48)
-    latent_dim: int = 8
+    latent_dim: int = 4
     dropout: float = 0.05
     sequence_length: int = 24
     batch_size: int = 64
