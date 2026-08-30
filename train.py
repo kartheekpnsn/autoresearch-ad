@@ -305,13 +305,17 @@ def vae_loss(
 
 @torch.no_grad()
 def reconstruction_scores(
-    model: VariationalAutoencoder, values: np.ndarray, device: torch.device
+    model: VariationalAutoencoder,
+    values: np.ndarray,
+    signal_count: int,
+    device: torch.device,
 ) -> np.ndarray:
-    """Calculate deterministic per-window reconstruction errors."""
+    """Calculate deterministic reconstruction errors at window endpoints."""
     model.eval()
     tensor = torch.tensor(values, dtype=torch.float32, device=device)
     reconstructed = model.reconstruct(tensor)
-    return torch.mean((tensor - reconstructed).square(), dim=1).cpu().numpy()
+    endpoint_errors = (tensor[:, -signal_count:] - reconstructed[:, -signal_count:]).square()
+    return torch.mean(endpoint_errors, dim=1).cpu().numpy()
 
 
 def detection_metrics(
@@ -477,7 +481,7 @@ def train(*, evaluate_test: bool = False) -> dict[str, float | int | str]:
 
     started = time.time()
     best_epoch, best_val_loss = train_model(model, splits, config, device)
-    val_scores = reconstruction_scores(model, splits.val, device)
+    val_scores = reconstruction_scores(model, splits.val, splits.signal_count, device)
     threshold, val_metrics = select_threshold(val_scores, splits.val_labels, config.beta)
     elapsed = time.time() - started
 
@@ -511,7 +515,9 @@ def train(*, evaluate_test: bool = False) -> dict[str, float | int | str]:
     ]
     summary.update({field: "" for field in test_fields})
     if evaluate_test:
-        test_scores = reconstruction_scores(model, splits.test, device)
+        test_scores = reconstruction_scores(
+            model, splits.test, splits.signal_count, device
+        )
         test_metrics = detection_metrics(
             splits.test_labels, test_scores >= threshold, config.beta
         )
