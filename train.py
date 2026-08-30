@@ -314,7 +314,9 @@ def reconstruction_scores(
     model.eval()
     tensor = torch.tensor(values, dtype=torch.float32, device=device)
     reconstructed = model.reconstruct(tensor)
-    endpoint_errors = (tensor[:, -signal_count:] - reconstructed[:, -signal_count:]).square()
+    endpoint_errors = torch.abs(
+        tensor[:, -signal_count:] - reconstructed[:, -signal_count:]
+    )
     return torch.mean(endpoint_errors, dim=1).cpu().numpy()
 
 
